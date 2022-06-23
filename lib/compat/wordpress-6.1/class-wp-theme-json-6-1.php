@@ -445,7 +445,7 @@ class WP_Theme_JSON_6_1 extends WP_Theme_JSON_6_0 {
 				static::$blocks_metadata[ $block_name ]['features'] = $features;
 			}
 
-			// Assign defaults, then overwrite those that the block sets by itself.
+			// Assign defaults, then override those that the block sets by itself.
 			// If the block selector is compounded, will append the element to each
 			// individual block selector.
 			$block_selectors = explode( ',', static::$blocks_metadata[ $block_name ]['selector'] );
@@ -1502,5 +1502,116 @@ class WP_Theme_JSON_6_1 extends WP_Theme_JSON_6_0 {
 			}
 		}
 		return $block_rules;
+	}
+
+	/**
+	 * Function that scopes a selector with another one. This works a bit like
+	 * SCSS nesting except the `&` operator isn't supported.
+	 *
+	 * <code>
+	 * $scope = '.a, .b .c';
+	 * $selector = '> .x, .y';
+	 * $merged = scope_selector( $scope, $selector );
+	 * // $merged is '.a > .x, .a .y, .b .c > .x, .b .c .y'
+	 * </code>
+	 *
+	 * @since 5.9.0
+	 *
+	 * @param string $scope    Selector to scope to.
+	 * @param string $selector Original selector.
+	 * @return string Scoped selector.
+	 */
+	public static function scope_selector( $scope, $selector ) {
+		$scopes    = explode( ',', $scope );
+		$selectors = explode( ',', $selector );
+
+		$selectors_scoped = array();
+		foreach ( $scopes as $outer ) {
+			foreach ( $selectors as $inner ) {
+				$outer = trim( $outer );
+				$inner = trim( $inner );
+				if( empty( $outer ) ) {
+					if( empty( $inner ) ) {
+						continue;
+					}
+					$selectors_scoped[] = $inner;
+				} else {
+					if( empty( $inner ) ) {
+						$selectors_scoped[] = $outer;
+					} else {
+						$selectors_scoped[] = $outer . ' ' . $inner;
+					}
+				}
+			}
+		}
+
+		$result = implode( ', ', $selectors_scoped );
+		return $result;
+	}
+
+	/**
+	 * Function that returns presets css variables scoped to a given selector.
+	 * Similar to get_css_variables but with added scoping.
+	 *
+	 * @access private
+	 *
+	 * @param string $scope Selector to scope to.
+	 * @return string A stylesheet with the preset variables.
+	 */
+	public function get_scoped_css_variables( $scope ) {
+		$blocks_metadata    = static::get_blocks_metadata();
+		$setting_nodes      = static::get_setting_nodes( $this->theme_json, $blocks_metadata );
+
+		// the root selector needs to target every possible block selector
+		// in order for the general setting to override any bock specific setting of a parent block or
+		// the site root.
+		$default_selector = ',[class*="wp-block"]';
+		$registry         = WP_Block_Type_Registry::get_instance();
+		$blocks           = $registry->get_all_registered();
+		foreach ( $blocks as $block_name => $block_type ) {
+			if (
+				isset( $block_type->supports['__experimentalSelector'] ) &&
+				is_string( $block_type->supports['__experimentalSelector'] )
+			) {
+				$default_selector .= ','.$block_type->supports['__experimentalSelector'];
+			}
+		}
+
+		// make the root node use the default selector for this section.
+		$setting_nodes[0]['selector'] = $default_selector;
+
+		// scope every selector.
+		foreach( $setting_nodes as &$node) {
+			$node['selector'] = static::scope_selector( $scope, $node['selector'] );
+		}
+
+		$styles = $this->get_css_variables( $setting_nodes, static::VALID_ORIGINS );
+		return $styles;
+	}
+
+	/**
+	 * Function that returns presets css classes scoped to a given selector.
+	 * Similar to get_preset_classes but with added scoping.
+	 *
+	 * @access private
+	 *
+	 * @param string $scope Selector to scope to.
+	 * @return string A stylesheet with the preset class rules.
+	 */
+	public function get_scoped_css_classes( $scope ) {
+		$blocks_metadata    = static::get_blocks_metadata();
+		$setting_nodes      = static::get_setting_nodes( $this->theme_json, $blocks_metadata );
+
+		// scope every selector.
+		foreach( $setting_nodes as &$node) {
+			$node['selector'] = static::scope_selector( $scope, $node['selector'] );
+		}
+
+		// make the root node use the scope selector for this section.
+		$setting_nodes[0]['selector'] = $scope . ',' . $scope . ' *';
+
+
+
+		return $this->get_preset_classes( $setting_nodes, static::VALID_ORIGINS );
 	}
 }
